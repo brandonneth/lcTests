@@ -14,14 +14,14 @@ set (ENABLE_REPRODUCERS Off CACHE BOOL "")
 set (ENABLE_EXERCISES Off CACHE BOOL "")
 set (ENABLE_DOCUMENTATION Off CACHE BOOL "")
 set (ENABLE_BENCHMARKS Off CACHE BOOL "")
-
+set (CMAKE_CXX_STANDARD 14)
 include(blt/SetupBLT.cmake)
 
 if (DEFINED RAJA_DIR)
   find_package(RAJA REQUIRED)
   blt_print_target_properties(TARGET RAJA)
 else ()
-  add_subdirectory(tpl/raja)
+  add_subdirectory(../RAJA build)
 endif ()
 
 if (ENABLE_CUDA)
