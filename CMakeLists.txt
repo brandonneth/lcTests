@@ -14,7 +14,8 @@ set (ENABLE_REPRODUCERS Off CACHE BOOL "")
 set (ENABLE_EXERCISES Off CACHE BOOL "")
 set (ENABLE_DOCUMENTATION Off CACHE BOOL "")
 set (ENABLE_BENCHMARKS Off CACHE BOOL "")
-set (CMAKE_CXX_STANDARD 14)
+set (CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_FLAGS "-fconcepts")
 include(blt/SetupBLT.cmake)
 
 if (DEFINED RAJA_DIR)
@@ -29,3 +30,4 @@ if (ENABLE_CUDA)
 endif ()
 
 add_subdirectory(src)
+
