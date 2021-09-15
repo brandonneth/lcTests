@@ -15,7 +15,7 @@ set (ENABLE_EXERCISES Off CACHE BOOL "")
 set (ENABLE_DOCUMENTATION Off CACHE BOOL "")
 set (ENABLE_BENCHMARKS Off CACHE BOOL "")
 set (CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_FLAGS "-fconcepts -w")
+set(CMAKE_CXX_FLAGS "-fconcepts -w -ftemplate-backtrace-limit=0")
 include(blt/SetupBLT.cmake)
 
 if (DEFINED RAJA_DIR)

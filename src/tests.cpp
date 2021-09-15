@@ -131,14 +131,16 @@ int test_sym_exec() {
 
 
  
-  auto forall1 = RAJA::make_forall<RAJA::seq_exec>(RAJA::RangeSegment(0,100), [&](auto i) {b(i) = a(i) + i;});
+  auto forall1 = RAJA::make_forall<RAJA::seq_exec>(RAJA::RangeSegment(0,100), [&](auto i) {b(i) = a(i);});
 
   auto symbolicAccesses = forall1.execute_symbolically();
-  
+ 
+   
   int err1a = 1;
   int err1b = 1;
   int err1extra = 0;
   for( auto access : symbolicAccesses) {
+    std::cerr << "forall1 Access: " << access << "\n";
     if (access.view == _a && access.isRead) {
       err1a = 0;
     }
@@ -160,6 +162,23 @@ int test_sym_exec() {
     std::cerr << "Symbolic Execution collected more accesses than there were\n";
   }
   numErrors += err1a + err1b + err1extra;
+
+  std::cout << "Testing left and right associativity of ops with symaccesslists\n";
+  auto leftAssociative = RAJA::make_forall<RAJA::seq_exec>(RAJA::RangeSegment(0,100), [=](auto i) {b(i) = ((((a(i) + a(i)) * 2) - 3.0) / a(i));});
+  auto rightAssociative = RAJA::make_forall<RAJA::seq_exec>(RAJA::RangeSegment(0,100), [=](auto i) {b(i) = (a(i) - (2 / (3.0 + a(i))));});
+
+  auto leftSym = leftAssociative.execute_symbolically();
+  auto rightSym = rightAssociative.execute_symbolically();
+
+  if (leftSym.size() != 4) {
+    std::cerr << "Incorrect number of accesses in left associative forall symbolic execution. Should be 4. Was: " << leftSym.size() << "\n";
+    numErrors += 1;
+  }
+  
+  if (rightSym.size() != 3) {
+    std::cerr << "Incorrect number of accesses in right associative forall symbolic execution. Should be 3. Was: " << rightSym.size() << "\n";
+    numErrors += 1;
+  }
   return numErrors;
 } //test_sym_exec
 
@@ -194,6 +213,8 @@ int test_forall_exec() {
   return error;
 }  
 
+
+/*
 //tests the creation of chain objects
 int test_chain_creation() {
   int numErrors = 0;
@@ -248,29 +269,7 @@ int test_chain_creation() {
   }
   return numErrors;
 }
-
-
-int test_create_transformations() {
-
-  int numErrors = 0;
-
-  auto shift1 = RAJA::shift<0>(0,0,1);
-
-  auto shift2 = RAJA::shift<3>(-2);
-
-
-  auto fusion1 = RAJA::Fusion<0,1,2>();
-  auto fusion2 = RAJA::Fusion<0,1>();
-  auto fusion3 = RAJA::Fusion<2,4,5>();
-
-
-
-  
-   return numErrors;
-
-
-} //test_create_transformations()
-
+*/
 int test_apply_shift() {
 
   int numErrors = 0;
@@ -297,9 +296,9 @@ int test_apply_shift() {
                 [&](auto i) {b1(i) = a1(i) + i;}
               );
    
-  auto chain1 = RAJA::chain(knl1, RAJA::shift<0>(5));
+  auto knl1Shifted = shift(knl1, 5); 
 
-  chain1();
+  knl1Shifted();
 
   int chain1Error1 = 0;
   for(int i = 0; i < 10; i++) {
@@ -347,25 +346,119 @@ int test_apply_shift() {
       >
     >
   >;
-
+  using namespace RAJA;
   //TODO: 2d shift
+  auto knl2 = RAJA::make_kernel<KERNEL_POL2>(
+    make_tuple(RangeSegment(0,10),RangeSegment(0,10)),
+    [=] (auto i, auto j) {
+      b2(i,j) = a2(i,j) + 2;
+    });
+
+  auto shifted2 = RAJA::shift(knl2, 1,-1);
+
+  for(int i = 0; i < 100; i++) {
+    _a[i] = i;
+    _b[i] = 0;
+  }
+
+  shifted2();
+
+  int shift2Error = 0;
+
+  for(int i = 0; i < 100; i++) {
+    if(_b[i] != i + 2) {
+      shift2Error = 1;
+    }
+  }
+  if(shift2Error) {
+    std::cerr << "Error shifting 2d kernel\n";
+    numErrors += shift2Error;
+  }
+
   return numErrors;
 } //test_apply_shift
+/*
+int test_fuse_2d() {
 
-int test_apply_fuse() {
 
+  using namespace RAJA;
   int numErrors = 0;
   double * _a = allocate<double>(100);
   double * _b = allocate<double>(100);
+  double * _c = allocate<double>(100);
+  using View2 = View<double, RAJA::Layout<2>>;
 
-  using VIEW_TYPE1 = RAJA::View<double, RAJA::Layout<1, int, 1>>;
+  View2 a(_a,10,10);
+  View2 b(_b,10,10);
+  View2 c(_c,10,10);
+  using KPol2 = KernelPolicy<
+    statement::For<0,RAJA::seq_exec,
+      statement::For<1,RAJA::seq_exec,
+        statement::Lambda<0>
+      >
+    >
+  >;
 
-  VIEW_TYPE1 a1(_a, 100);
-  VIEW_TYPE1 b1(_b, 100);
+  auto ispace1 = make_tuple(RangeSegment(2,4), RangeSegment(2,4));
+  auto ispace2 = make_tuple(RangeSegment(1,3), RangeSegment(1,3));
 
-  using KERNEL_POL1 = RAJA::KernelPolicy<
-    RAJA::statement::For<0,RAJA::seq_exec,
-      RAJA::statement::Lambda<0>
+  auto knl1 = make_kernel<KPol2>(ispace1, [=](auto i,auto j) {b(i,j) = a(i,j);});
+  auto knl2 = make_kernel<KPol2>(ispace2, [=](auto i,auto j) {a(i+1,j+1) = 0;});
+ 
+  for(int i = 0; i < 100; i++) {
+    _a[i] = 1;
+    _b[i] = 2;
+  }
+
+  auto f1 = fuse(knl1,knl2);
+
+  f1();
+
+  int f1e1 = 0;
+  for(int i = 2; i < 4; i++) {
+    for(int j = 2; j < 4; j++) {
+      if(b(i,j) != 0) {
+        f1e1 = 1;
+      }
+    }
+  }
+  if(f1e1) {
+    std::cout << "Error fusing 2 2d kernels\n";
+    numErrors += f1e1;
+  }
+ int f1e2 = 0;
+  for(int i = 1; i < 3; i++) {
+    for(int j = 1; j < 3; j++) {
+      if(a(i+1,j+1) != 0) {
+        f1e2 = 1;
+      }
+    }
+  }
+  if(f1e2) {
+    std::cout << "Error fusing 2 2d kernels\n";
+    numErrors += f1e2;
+  }
+
+  return numErrors;
+
+} //test_fuse_2d;
+i
+*/
+int test_apply_fuse() {
+
+  using namespace RAJA;
+  int numErrors = 0;
+  double * _a = allocate<double>(100);
+  double * _b = allocate<double>(100);
+  double * _c = allocate<double>(100);
+  using View1 = View<double, RAJA::Layout<1, int, 1>>;
+
+  View1 a1(_a, 100);
+  View1 b1(_b, 100);
+  View1 c1(_c, 100);
+  using KPol1 = KernelPolicy<
+    statement::For<0,RAJA::seq_exec,
+      statement::Lambda<0>
     >
   >;
 
@@ -373,26 +466,28 @@ int test_apply_fuse() {
     _a[i] = 10;
     _b[i] = 0;
   }
-  auto knl1 = RAJA::make_kernel<KERNEL_POL1>(
+  auto knl1 = RAJA::make_kernel<KPol1>(
                 RAJA::make_tuple(RAJA::RangeSegment(10,20)),
                 [&](auto i) {b1(i) = a1(i);}
               );
-  auto knl2 = RAJA::make_kernel<KERNEL_POL1>(
+  auto knl2 = RAJA::make_kernel<KPol1>(
                 RAJA::make_tuple(RAJA::RangeSegment(10,20)),
                 [=](auto i) {a1(i+1) = 1;}
               );
 
+  auto fusedKnls = fuse(knl1, knl2);
 
-  auto chain1 = RAJA::chain(knl1, knl2, RAJA::fuse<0,1>());
+  fusedKnls();
 
-
-  chain1();
 
   int c1err1 = 0;
   for(int i = 10; i < 11; i++) {
     if(_b[i] != 10) {
       c1err1 = 1;
     }
+  }
+  if(c1err1) {
+    std::cerr << "1d fused knl fails for b(10)\n";
   }
 
   int c1err2 = 0;
@@ -402,145 +497,272 @@ int test_apply_fuse() {
     }
   }
 
-  if(c1err1) {
-    std::cerr << "1d fused knl fails for b(10)\n";
-  }
-
   if(c1err2) {
     std::cerr << "1d fused knl fails for b11 to b20\n";
   }
-
-  numErrors += c1err1 + c1err2;
   
-  auto knl3 =  RAJA::make_kernel<KERNEL_POL1>(
-                RAJA::make_tuple(RAJA::RangeSegment(8,15)),
-                [&](auto i) {b1(i) = a1(i);}
+
+  numErrors += (c1err1 + c1err2);
+
+  auto knl3 =  RAJA::make_kernel<KPol1>(
+                RAJA::make_tuple(RAJA::RangeSegment(7,20)),
+                [=](auto i) {a1(i+1) = 1;}
               );
 
+  auto fknls2 = fuse(knl1,knl3);
 
   for(int i = 0; i < 100; i++) {
     _a[i] = 10;
     _b[i] = 0;
   }
-  
-  auto chain2 = RAJA::chain(knl3,knl2, RAJA::fuse<0,1>());
 
-  chain2();
+  fknls2();
 
-  int c2err1 = 0;
-  for(int i = 8; i < 10; i++) {
-    if(_b[i] != 10) {
-      c2err1 = 1;
+  int f2err1 = 0;
+  for(int i = 7; i < 10; i++ ) {
+    if (_a[i+1] != 1) {
+      f2err1 = 1;
     }
   }
-
-  if(c2err1) {
-    std::cerr << "Fusion error with starting non-overlap segment of loop 1\n";
+  if(f2err1) {
+    std::cout << "Error with executing initial segment of second kernel in fusion\n";
+    numErrors += 1;
   }
 
-  int c2err2 = 0;
-  for(int i = 11; i < 15; i++) {
+  int f2err2 = 0;
+  for(int  i = 10; i< 20; i++ ) {
     if(_b[i] != 1) {
-      c2err2 = 1;
+      f2err2 = 1;
     }
   }
-  
-  if(c2err2) {
-    std::cerr << "2d fusion error with overlapping segment\n";
-  } 
-  
-  int c2err3 = 0;
-  int c2err4 = 0;
-  for(int i = 15; i < 20; i++) {
-    if(_b[i] != 0) {
-      c2err3 = 1;
+  if(f2err2) {
+    std::cout << "Error with fusion of kernels where knl2 has initial segment\n";
+    numErrors += 1;
+  }
+
+  auto knl4 = RAJA::make_kernel<KPol1>(
+                RAJA::make_tuple(RAJA::RangeSegment(7,20)),
+                [=](auto i) {c1(i) = b1(i+1);}
+              ); 
+
+  auto f3 = fuse(knl1,knl3,knl4);
+
+  for(int i = 0; i < 100; i++) {
+    a1(i) = 1;
+    b1(i) = 3;
+    c1(i) = 5;
+  }
+
+  f3();
+
+  int f3err1 = 0;
+  for(int i = 7; i < 20; i++) {
+    if (c1(i) != 3) {
+      f3err1 = 1;
     }
-    if(_a[i] != 1) {
-      c2err4 = 1;
-    }
   }
- 
-  if(c2err3) {
-    std::cerr << "First loop executed past its range in fusion\n";
-  }
-  if(c2err4) {
-    std::cerr << "Second loop did not execute its non-overlap in fusion\n";
+  if(f3err1) {
+    std::cout << "Error with execution order of 3 kernel fusion\n";
+    numErrors += f3err1;
   }
 
-  numErrors += c2err1 + c2err2 + c2err3 + c2err4;
-
-
-  using VIEW_TYPE2 = RAJA::View<double, RAJA::Layout<2>>;
-
-  VIEW_TYPE2 a2(_a,10,10);
-  VIEW_TYPE2 b2(_b,10,10);
-   
-  using KERNEL_POL2 = RAJA::KernelPolicy<
-    RAJA::statement::For<0,RAJA::seq_exec,
-      RAJA::statement::For<1,RAJA::seq_exec,
-        RAJA::statement::Lambda<0>
-      >
-    >
-  >;
 
  
-  
-
+  //numErrors += test_fuse_2d();
   return numErrors;
 } //test_apply_fuse()
 
 
-int test_apply_tile() {
+
+int test_shift_and_fuse() {
+
+
+  using namespace RAJA;
   int numErrors = 0;
+  double * _a = allocate<double>(100);
+  double * _b = allocate<double>(100);
+  double * _c = allocate<double>(100);
+  double * _d = allocate<double>(100);
+  using View2 = View<double, RAJA::Layout<2>>;
+
+  View2 a(_a,10,10);
+  View2 b(_b,10,10);
+  View2 c(_c,10,10);
+  View2 d(_d,10,10);
+  using KPol2 = KernelPolicy<
+    statement::For<0,RAJA::seq_exec,
+      statement::For<1,RAJA::seq_exec,
+        statement::Lambda<0>
+      >
+    >
+  >;
+
+  auto ispace1 = make_tuple(RangeSegment(1,9), RangeSegment(1,9));
+
+  auto knl1 = make_kernel<KPol2>(ispace1, [=] (auto i, auto j) {b(i,j) = a(i-1,j) + a(i+1,j) + a(i,j-1) + a(i,j+1);});
+  auto knl2 = make_kernel<KPol2>(ispace1, [=] (auto i, auto j) {c(i,j) = b(i-1,j) + b(i+1,j) + b(i,j-1) + b(i,j+1);});
+  auto knl3 = make_kernel<KPol2>(ispace1, [=] (auto i, auto j) {d(i,j) = c(i-1,j) + c(i+1,j) + c(i,j-1) + c(i,j+1);});
+
+  auto sf1 = shift_and_fuse(knl1,knl2,knl3);
+
+  for(int i = 0; i < 10; i++) {
+    for(int j = 0; j < 10; j++) {
+      a(i,j) = 1;
+      b(i,j) = 10;
+      c(i,j) = 20;
+      d(i,j) = 30;
+    } 
+  }
+  sf1();
+  int f1e1 = 0;
+  for(int i = 1; i < 9; i++) {
+    for(int j = 1; j < 9; j++) {
+      if (b(i,j) != 4) {
+        f1e1 = 1;
+      }
+    }
+  }
+ 
+  if (f1e1) {
+    std::cerr << "When shift and fuse on three jacobis, first kernel does not execute properly.\n";
+    std::cerr << "b(2,2) is: " << b(2,2);
+    numErrors += f1e1;
+  }
+  int f1e2 = 0; 
+  for(int i = 2; i < 8; i++) {
+    for(int j = 2; j < 8; j++) {
+      if (c(i,j) != 16) {
+        f1e2 = 1;
+      }
+    }
+  }
+  if (f1e2) {
+    std::cerr << "When shift and fuse on three jacobis, second kernel does not execute properly.\n";
+    numErrors += f1e2;
+  }
+
+  int f1e3 = 0; 
+  for(int i = 3; i < 7; i++) {
+    for(int j = 3; j < 7; j++) {
+      if (d(i,j) != 64) {
+        f1e3 = 1;
+      }
+    }
+  }
+  if (f1e3) {
+    std::cerr << "When shift and fuse on three jacobis, third kernel does not execute properly.\n";
+    numErrors += f1e3;
+  }
 
 
 
   return numErrors;
-} //test_apply_tile
+} //test_shift_and_fuse
 
-int test_apply_overlapped_tile() {
+int test_index_sets() {
+
+
+  using namespace RAJA;
   int numErrors = 0;
-  double * _a = allocate<double>(64);
-  double * _b = allocate<double>(64);
+  double * _a = allocate<double>(100);
+  double * _b = allocate<double>(100);
+  double * _c = allocate<double>(100);
+  double * _d = allocate<double>(100);
+  using View2 = View<double, RAJA::Layout<2>>;
 
-  using VIEW_TYPE2 = RAJA::View<double, RAJA::Layout<2>>;
-  VIEW_TYPE2 a2(_a,8,8);
-  VIEW_TYPE2 b2(_b,8,8);
-   
-  using KERNEL_POL2 = RAJA::KernelPolicy<
-    RAJA::statement::For<0,RAJA::seq_exec,
-      RAJA::statement::For<1,RAJA::seq_exec,
+  View2 a(_a,10,10);
+  View2 b(_b,10,10);
+  View2 c(_c,10,10);
+  View2 d(_d,10,10);
+  
+  //initialize_data
+  auto initialize = [=]() {
+    for(int i = 0; i < 10; i++ ){
+      for(int j = 0; j < 10; j++) {
+        a(i,j) = 1;
+        b(i,j) = 2;
+        c(i,j) = 5;
+        d(i,j) = -7;
+      }
+    }  
+  };
+  initialize();
+
+
+  RAJA::TypedIndexSet<RAJA::RangeSegment> iset1;
+
+  iset1.push_back(RAJA::RangeSegment(0,5));
+  iset1.push_back(RAJA::RangeSegment(6,10));
+
+  auto lambda_1d = [=](auto i) {b(0,i) = a(0,i);};
+
+  using ISET_EXECPOL_1D = RAJA::ExecPolicy<RAJA::seq_segit, RAJA::seq_exec>;
+
+  RAJA::forall<ISET_EXECPOL_1D>(iset1, lambda_1d);
+
+  int originalError1d1 = 0;
+  int originalError1d2 = 0;
+  for(int i = 0; i < 10; i++) {
+    if(i == 5) {
+       originalError1d1 = b(0,i) != 2;
+    } else if(b(0,i) != 1) {
+      originalError1d2 = 1; 
+      std::cerr << "1d forall indexset didn't execution iteration: " << i << "\n";
+    }
+  }  
+  if(originalError1d1) {
+    std::cerr << "1d forall indexset executes iteration it shouldnt.\n";
+  }
+  if(originalError1d2) {
+    std::cerr << "1d forall indexset doesnt execute iteration that it should\n";
+  }
+  numErrors += originalError1d1 + originalError1d2;
+
+  
+  //2D INDEX SET TEST
+
+  RAJA::TypedIndexSet<RAJA::RangeSegment> iset2;
+  iset2.push_back(RAJA::RangeSegment(0,5));
+  iset2.push_back(RAJA::RangeSegment(6,10));
+
+  auto lambda_2d = [=](auto i, auto j) {b(i,j) = a(i,j);};
+
+  using KNLPOL = RAJA::KernelPolicy<
+    RAJA::statement::For<0,ISET_EXECPOL_1D,
+      RAJA::statement::For<1,ISET_EXECPOL_1D,
         RAJA::statement::Lambda<0>
       >
     >
   >;
 
-  std::stringstream s;
+ 
+  auto forall1 = RAJA::make_forall<ISET_EXECPOL_1D>(iset1, lambda_1d);
+
+  initialize();
+  forall1();
   
-  auto l = [&](auto i, auto j) {
-    s << i << j << ".";
-  };
-
-  auto segments = RAJA::make_tuple(RAJA::RangeSegment(4,6), RAJA::RangeSegment(4,6));
-
-  auto knl = RAJA::make_kernel<KERNEL_POL2>(segments, l);
-
-  auto overlapAmounts = RAJA::make_tuple(1,1);
-  auto tileSizes = RAJA::make_tuple(1,1);
-
-  auto chain = RAJA::chain(knl, RAJA::overlapped_tile<0>(overlapAmounts, tileSizes));
-
-  chain();
-
-  std::string chain1Correct = "33.34.43.44." "34.35.44.45." "43.44.53.54." "44.45.54.55.";
-
-  if(s.str() != chain1Correct) {
-    std::cerr << "2D OverlappedTile Error.\nShould be: " << chain1Correct << "\nIs       : " << s.str() << "\n";
-    numErrors +=1;
+  int objectError1d1 = 0;
+  int objectError1d2 = 0;
+  for(int i = 0; i < 10; i++) {
+    if(i == 5) {
+       objectError1d1 = b(0,i) != 2;
+    } else if(b(0,i) != 1) {
+      objectError1d2 = 1; 
+      std::cerr << "1d forall indexset object didn't execution iteration: " << i << "\n";
+    }
+  }  
+  if(objectError1d1) {
+    std::cerr << "1d forall indexset object executes iteration it shouldnt.\n";
   }
+  if(objectError1d2) {
+    std::cerr << "1d forall indexset object doesnt execute iteration that it should\n";
+  }
+  numErrors += objectError1d1 + objectError1d2;
 
   return numErrors;
-}
+} //test_index_sets
+
+/*
 int printing_fuse_test() {
 
   using KERNEL_POL2 = RAJA::KernelPolicy<
@@ -1412,7 +1634,11 @@ int shift_amount_example() {
 
 } //shift_amount_example
 
+*/
 
+
+
+/*
 int overlapped_tile_example() {
 
   std::cout << "\n\n\n\n===== Overlapped Tile Example=====\n";
@@ -1434,18 +1660,20 @@ int overlapped_tile_example() {
   VIEW_TYPE2 c(_c,16,16);
   VIEW_TYPE2 d(_d,16,16);
 
-  auto rangeSegment = RAJA::make_tuple(RAJA::RangeSegment(1,3), RAJA::RangeSegment(1,3));
+  auto rangeSegment = RAJA::make_tuple(RAJA::RangeSegment(6,12), RAJA::RangeSegment(6,12));
  
 
   auto lambda1 = [=](auto i, auto j) {
+    std::cout << "pk1: " << i << ", " << j << "\n";
     b(i,j) = (a(i-1,j) + a(i,j-1) + a(i,j) + a(i+1,j) + a(i,j+1));
-    
   };
   auto lambda2 = [=](auto i, auto j) {
-    c(i,j) = (b(i-1,j) + b(i,j-1) + b(i,j) + b(i+1,j) + b(i,j));
+   std::cout << "pk2: " << i << ", " << j << "\n";
+   c(i,j) = (b(i-1,j) + b(i,j-1) + b(i,j) + b(i+1,j) + b(i,j));
   };
   auto lambda3 = [=](auto i, auto j) {
-    d(i,j) = (c(i-1,j) + c(i,j-1) + c(i,j) + c(i+1,j) + c(i,j+1)) + b(i,j);
+    std::cout << "pk3: " << i << ", " << j << "\n";
+    d(i,j) = (c(i-1,j) + c(i,j-1) + c(i,j) + c(i+1,j) + c(i,j+1));
   };
 
   using KPOL =  RAJA::KernelPolicy<
@@ -1460,8 +1688,8 @@ int overlapped_tile_example() {
   auto knl2 = RAJA::make_kernel<KPOL>(rangeSegment, lambda2);
   auto knl3 = RAJA::make_kernel<KPOL>(rangeSegment, lambda3);
 
-  auto shifted2 = RAJA::shift_kernel(knl2, RAJA::shift<1>(1,1));
-  auto shifted3 = RAJA::shift_kernel(knl3, RAJA::shift<2>(2,2));
+  auto shifted2 = RAJA::shift(knl2, 1,1);
+  auto shifted3 = RAJA::shift(knl3, 2,2);
 
   using namespace RAJA;
  
@@ -1476,28 +1704,7 @@ int overlapped_tile_example() {
   auto overlaps = make_tuple(overlaps1, overlaps2, overlaps3);
   std::cout << "(4,4), (2,2), (0,0)\n";
   
-  auto forNestExecPol = for_nest_exec_pol<2,0,0>();
-
-
-  auto pk = [=](auto i, auto j)  {std::cout << "called: " << i << ", " << j << "\n";};
-
-  RAJA::kernel<RAJA::KernelPolicy<decltype(forNestExecPol)>>(make_tuple(RangeSegment(0,3), RangeSegment(0,3)), pk);
-
-
-  auto forNestKernelPol = overlapped_tiling_inner_exec_pol<1,2>();
   
-  RAJA::kernel<decltype(forNestKernelPol)>(make_tuple(RangeSegment(0,3), RangeSegment(0,3)), pk);
-
-  std::cout << "Creating execution policy for 2 2d for loops.\n";
-
-  auto forNestKernelPol2 = overlapped_tiling_inner_exec_pol<2,2>();
-  
-
-  std::cout << "Cannot have a bunch of range segments because the lambdas need to have arguments for as many range segment there are.\n";
-
-  std::cout << "\n the new plan is to have a lambda which takes RangeSegments as arguments and executes the tile for those range segments\n";
-
-  std::cout << "executorLambda is such a lambda for 3 functions: pk1, pk2 and pk3\n";
 
   auto pk1 = make_kernel<KPOL>(rangeSegment, [=](auto i, auto j)  {std::cout << "pk1: " << i << ", " << j << "\n";});
   auto pk2 = make_kernel<KPOL>(rangeSegment, [=](auto i, auto j)  {std::cout << "pk2: " << i << ", " << j << "\n";});
@@ -1558,19 +1765,7 @@ int overlapped_tile_example() {
 
   executorFunc(make_tuple(RangeSegment(-4,0), RangeSegment(-2,2)));
   
-  /*
-  std::cout << "Next question: Can we execute this executor function as the lambda within a kernel of its own?\n";
-
-  std::cout << "Lets start by creating an iterator of range segments\n";
-
-  std::vector<RangeSegment> iRanges = {RangeSegment(1,2), RangeSegment(2,3)};
-  std::vector<RangeSegment> jRanges = {RangeSegment(1,2), RangeSegment(2,3)};
   
-  std::cout << "Executing overlapped tile executor using raja kernel over two iterators of range segments\n";
-
-  kernel<KPOL>(RAJA::make_tuple(iRanges,jRanges), executorFunc);
-  */
-
 
   using TPOL = KernelPolicy<
     statement::OverlappedTile<0,RAJA::statement::tile_fixed<2>, RAJA::seq_exec,
@@ -1582,15 +1777,258 @@ int overlapped_tile_example() {
   std::cout << "Executing overlapped tiled lambdas using the new statement types\n";
   kernel<TPOL>(make_tuple(RangeSegment(0,4), RangeSegment(0,4)), executorFunc);
 
-  
+  auto otiled = overlapped_tile_no_fuse(knl1, knl2, knl3);
+
+  std::cout << "Executing kernel using overlapped tile kernel function\n";
+  otiled();
+   
 
 }//overlapped_tile_example
+*/
 
-int main(int RAJA_UNUSED_ARG(argc), char** RAJA_UNUSED_ARG(argv[])) {
-
-  printing_fuse_test();
+int test_overlapped_tile() {
 
   int numErrors = 0;
+  double * _a = allocate<double>(16*16);
+  double * _b = allocate<double>(16*16);
+  double * _c = allocate<double>(16*16);
+  double * _d = allocate<double>(16*16);
+
+  using namespace RAJA;
+
+  using VIEW_TYPE2 = View<double, RAJA::Layout<2>>;
+  VIEW_TYPE2 a(_a,16,16);
+  VIEW_TYPE2 b(_b,16,16);
+  VIEW_TYPE2 c(_c,16,16);
+  VIEW_TYPE2 d(_d,16,16);
+
+  auto initialize = [=]() {
+    for(int i = 0; i < 16; i++) {
+      for(int j = 0; j < 16; j++) {
+        a(i,j) = 1;
+        b(i,j) = 10;
+        c(i,j) = 20;
+        d(i,j) = 30;
+      }
+    }
+  };
+
+  auto lambda1 = [=](auto i, auto j) {
+    //std::cout << "pk1: " << i << ", " << j << "\n";
+    b(i,j) = (a(i-1,j) + a(i,j-1) + a(i,j) + a(i+1,j) + a(i,j+1));
+    std::cout << "l1 " << i << " " << j << "\n";
+  };
+  auto lambda2 = [=](auto i, auto j) {
+   //std::cout << "pk2: " << i << ", " << j << "\n";
+   c(i,j) = (b(i-1,j) + b(i,j-1) + b(i,j) + b(i+1,j) + b(i,j+1));
+    std::cout << "l2 " << i << " " << j << "\n";
+  };
+  auto lambda3 = [=](auto i, auto j) {
+    //std::cout << "pk3: " << i << ", " << j << "\n";
+    d(i,j) = (c(i-1,j) + c(i,j-1) + c(i,j) + c(i+1,j) + c(i,j+1));
+    std::cout << "l3 " << i << " " << j << "\n";
+  };
+
+  auto checksum = [=]() {
+    int sum = 0;
+    for(int i = 0; i < 16; i++) {
+      for(int j = 0; j < 16; j++) { 
+        sum += a(i,j);
+        sum += b(i,j);
+        sum += c(i,j);
+        sum += d(i,j);
+      }
+    }
+    return sum;
+  };
+  
+  auto rangeSegment = make_tuple(RangeSegment(1,15), RangeSegment(1,15));
+ 
+  using KPOL =  RAJA::KernelPolicy<
+    RAJA::statement::For<0,RAJA::seq_exec,
+      RAJA::statement::For<1,RAJA::seq_exec,
+        RAJA::statement::Lambda<0>
+      >
+    >
+  >;
+
+  auto knl1 = RAJA::make_kernel<KPOL>(rangeSegment, lambda1);
+  auto knl2 = RAJA::make_kernel<KPOL>(rangeSegment, lambda2);
+  auto knl3 = RAJA::make_kernel<KPOL>(rangeSegment, lambda3);
+
+  auto correct_values = [=]() {
+    initialize();
+    knl1();
+    knl2();
+    knl3();
+    return checksum();
+  };
+
+  auto correct = correct_values();
+
+  std::cout << "Correct checksum is: " << correct_values() << "\n";
+
+  
+  auto otiled = overlapped_tile_no_fuse<>(knl1, knl2, knl3);
+
+  initialize();
+  otiled();
+
+  int otiledCheck = checksum();
+
+  auto print_array = [](auto a) {
+    for(int i = 0; i < 16; i++) {
+      for(int j = 0; j < 16; j++) { 
+        std::cout << a(i,j) << " ";
+      }
+      std::cout << "\n";
+    }
+
+  };
+
+  if(otiledCheck != correct) {
+    std::cerr << "Error with execution of overlapped tiling of 3 jacobis. Checksum is incorrect: " << otiledCheck << ".\n";
+
+    std::cerr << "Value in a,b,c,d middle points: " << a(8,8) << ", " << b(8,8) << ", " <<c(8,8) << ", " << d(8,8) << "\n";
+    std::cout << "a:\n";
+    print_array(a);
+    std::cout << "b:\n";
+    print_array(b);
+    std::cout << "c:\n";
+    print_array(c);   
+    std::cout << "d:\n";
+    print_array(d);
+
+    numErrors += 1;
+  }
+ 
+
+  return numErrors;
+} //test_overlapped_tile
+
+template <typename...SegTypes>
+int segment_tuple_equal(camp::tuple<SegTypes...> t1, camp::tuple<SegTypes...> t2) {
+  using namespace RAJA;
+  if constexpr (sizeof...(SegTypes) == 0) {
+    return 1;
+  } else {
+    auto st1 = tuple_slice<1,sizeof...(SegTypes)>(t1);
+    auto st2 = tuple_slice<1,sizeof...(SegTypes)>(t2);
+    auto s1 = camp::get<0>(t1);
+    auto s2 = camp::get<0>(t2);
+    
+    return *s1.begin() == *s2.begin() && *s1.end() == *s2.end() && segment_tuple_equal(st1,st2);
+  }
+}
+
+//tests common utilities for transformations
+int test_common() {
+  int numErrors = 0;
+  using namespace RAJA;
+
+  auto seg = [](auto low, auto hi) {return RangeSegment(low,hi);};
+
+  auto tuple1 = make_tuple(seg(0,10), seg(0,10), seg(0,10));
+  auto tuple2 = make_tuple(seg(1,10), seg(2,11), seg(0,10));
+  
+  auto correct1 = make_tuple(seg(1,10), seg(2,10), seg(0,10));
+
+  auto shared1 = intersect_segment_tuples(tuple1,tuple2);
+  if(!segment_tuple_equal(shared1,correct1)) {
+    std::cerr << "Error with intersecting 2 3D segment tuples\n";
+    numErrors += 1;
+  } 
+
+
+  return numErrors;  
+}
+
+int test_list_segments() {
+  int numErrors = 0;
+ 
+  double * _a = allocate<double>(16*16);
+  double * _b = allocate<double>(16*16);
+  double * _c = allocate<double>(16*16);
+  double * _d = allocate<double>(16*16);
+
+  using namespace RAJA;
+
+  using VIEW_TYPE2 = View<double, RAJA::Layout<2>>;
+  VIEW_TYPE2 a(_a,16,16);
+  VIEW_TYPE2 b(_b,16,16);
+  VIEW_TYPE2 c(_c,16,16);
+  VIEW_TYPE2 d(_d,16,16);
+
+  auto initialize = [=]() {
+    for(int i = 0; i < 16; i++) {
+      for(int j = 0; j < 16; j++) {
+        a(i,j) = 1;
+        b(i,j) = 10;
+        c(i,j) = 20;
+        d(i,j) = 30;
+      }
+    }
+  };
+  initialize();
+  auto lambda1 = [=](auto i, auto j) {
+    b(i,j) = a(i,j);
+  };
+
+  std::vector<int> indices1 = {1,3,5,7,9,11,13,15};
+  std::vector<int> co_indices1 = {0,2,4,6,8,10,12,14};
+  auto listSegment1 = RAJA::ListSegment(indices1);
+  auto dim2Range = RAJA::RangeSegment(0,16);
+  using KPOL =  RAJA::KernelPolicy<
+    RAJA::statement::For<0,RAJA::seq_exec,
+      RAJA::statement::For<1,RAJA::seq_exec,
+        RAJA::statement::Lambda<0>
+      >
+    >
+  >;
+
+  auto knl1 = RAJA::make_kernel<KPOL>(RAJA::make_tuple(listSegment1,dim2Range), lambda1);
+
+  knl1();
+
+
+  int error = 0;
+  for(int i : indices1) {
+    for(int j = 0; j < 16; j++) {
+      if(b(i,j) != a(i,j)) {
+        error = 1;
+      }
+    }  
+  }
+  if(error) {  
+    std::cerr << "ListSegment execution did not execute iterations it was supposed to.\n";
+    numErrors += 1;
+  }
+  error = 0;
+  for(int i : co_indices1) {
+    for(int j = 0; j < 16; j++) {
+      if(b(i,j) != 10) {
+        std::cerr << "Incorrectly executed iteration: " << i << ", " << j << "\n";
+        error = 1;
+      }
+    }
+  }
+  if(error) {  
+    std::cerr << "ListSegment execution executed the wrong iteration\n";
+    numErrors += 1;
+  }
+
+    
+
+
+  return numErrors;
+}
+
+int main(int RAJA_UNUSED_ARG(argc), char** RAJA_UNUSED_ARG(argv[])) {
+  int numErrors = 0;
+
+  int commonCodeErrors = test_common();
+  std::cerr << "Common Code Errors: " << commonCodeErrors << "\n\n";
+  numErrors += commonCodeErrors;
   
   int forallExecErrors = test_forall_exec();
   std::cerr << "Forall Execution Errors: " << forallExecErrors << "\n\n";
@@ -1605,38 +2043,45 @@ int main(int RAJA_UNUSED_ARG(argc), char** RAJA_UNUSED_ARG(argv[])) {
   std::cerr << "Symbolic Execution Errors: " << symExecErrors << "\n\n";
   numErrors += symExecErrors;
 
-  int chainCreationErrors = test_chain_creation();
-  std::cout << "Chain Creation Errors: " << chainCreationErrors << "\n\n";
-  numErrors += chainCreationErrors;
-
-  int createTransErrors = test_create_transformations();
-  std::cout << "Transformation Creation Errors: " << createTransErrors << "\n\n";
-  numErrors += createTransErrors;
-
   int shiftErrors = test_apply_shift();
   std::cerr << "Shift Application Errors: " << shiftErrors << "\n\n";
   numErrors += shiftErrors;
 
+
   int fuseErrors = test_apply_fuse();
   std::cerr << "Fuse Application Errors: " << fuseErrors << "\n\n";
   numErrors += fuseErrors;
+  
+  int shiftfuseErrors = test_shift_and_fuse();
+  std::cerr << "Shift ANd Fuse Application Errors: " << shiftfuseErrors << "\n\n";
+  numErrors += shiftfuseErrors;
 
+  int overlappedTileErrors = test_overlapped_tile();
+  std::cerr << "Overlapped Tile Application Errors: " << overlappedTileErrors << "\n\n";
+  numErrors += overlappedTileErrors;
+
+  int listSegmentErrors = test_list_segments();
+  std::cerr << "List Segment Errors: " << listSegmentErrors << "\n\n";
+  numErrors += listSegmentErrors;
+
+ 
+  int indexSetErrors = test_index_sets();
+  std::cerr << "Index Set Errors: " << indexSetErrors << "\n\n";
+  numErrors += indexSetErrors;
+/*
   int tileErrors = test_apply_tile();
   std::cerr << "Tile Application Errors: " << tileErrors << "\n\n";
   numErrors += tileErrors;
 
-  int overlappedTileErrors = test_apply_overlapped_tile();
-  std::cerr << "Overlapped Tile Application Errors: " << overlappedTileErrors << "\n\n";
-  numErrors += overlappedTileErrors;
 
   int islErrors = test_isl();
   std::cerr << "ISL Errors: " << islErrors<< "\n\n";
   numErrors += islErrors;
-
+*/
   std::cout << "Total error count: " << numErrors;
 
   //fixed_fusion_example_2();
   //fused_scheduling_example();
-  overlapped_tile_example();
+  //overlapped_tile_example();
   return numErrors;
 }
